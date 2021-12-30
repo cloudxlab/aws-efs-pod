@@ -9,3 +9,7 @@ spec:
   resources:
     requests:
       storage: 3Gi
+  selector:
+    matchLabels:
+      volume-type: general
+      aws-az: ap-south-1a
