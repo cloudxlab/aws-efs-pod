@@ -4,6 +4,8 @@ metadata:
   name: efs-pv
   labels:
     type: local
+    volume-type: general
+    aws-az: ap-south-1a
 spec:
   storageClassName: aws-efs
   capacity:
