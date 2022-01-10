@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: hp-pv
+  labels:
+    type: local
+    volume-type: general
+spec:
+  storageClassName: local-sc
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  hostPath:
+    path: "/data_dir"
