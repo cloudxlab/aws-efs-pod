@@ -1,0 +1,126 @@
+This document explains how to create AWS EFS via aws cli and then, mount the EFS on EC2 using sudo mount
+
+This exercise assumes that you already have running EC2 instances where you intend to mount the EFS
+High level steps:
+1. Install and configure aws cli
+2. Retrieve the details of pre-created EC2 machines where you want to mount the EFS
+3. Create an EFS
+4. Create mount targets for required VPCs/Subnets
+5. Create security group for EFS
+
+1. Install and configure aws cli
+
+sudo apt-get update
+sudo apt-get install awscli
+aws --version
+
+Get your credential from AWS and define the env vars.
+export AWS_ACCESS_KEY_ID="XXXXX"
+export AWS_SECRET_ACCESS_KEY="XXXXXXXXXXX"
+
+aws configure
+
+aws configure --profile "adminuser"
+
+
+Get details of all instances.
+aws ec2 describe-instances  \
+--query "Reservations[*].Instances[*].{InstanceId:InstanceId,PublicIP:PublicIpAddress,PublicDnsName:PublicDnsName, PrivateIP:PrivateIpAddress,PrivateDnsName:PrivateDnsName,Type:InstanceType,Name:Tags[?Key=='Name']|[0].Value,Status:State.Name,SGName:SecurityGroups[0].GroupName,SGId:SecurityGroups[0].GroupId,VpcId:VpcId,AZ:Placement.AvailabilityZone,SubnetId:SubnetId}" --output table
+
+Get details of specific instances if needed.
+aws ec2 describe-instances --instance-ids i-0d7b8fe76e5c80885 --query "Reservations[].Instances[]" --output table
+
+For this exercise, we will set up EFS in same VPC where EC2 machines are running.
+
+Get details of all VPCs and take note of the one where EC2 are running.
+aws ec2 describe-vpcs
+
+### create a security-group for EFS
+aws ec2 create-security-group \
+--region ap-south-1 \
+--group-name efs-sg \
+--description "Amazon EFS SG for mount target" \
+--vpc-id vpc-bee01ed5 \
+--profile adminuser
+
+aws ec2 describe-security-groups \
+--group-names efs-sg \
+--profile adminuser \
+--region ap-south-1
+
+Authorize inbound access to the security group for the Amazon EFS mount target
+Here, --group-id -> ID of the security group created for Amazon EFS mount target
+--source-group -> ID of the security group created for EC2 instance
+aws ec2 authorize-security-group-ingress \
+--group-id sg-03fa04a0a85b8e5df \
+--protocol tcp \
+--port 2049 \
+--source-group sg-09b42ed286c59b050 \
+--profile adminuser \
+--region ap-south-1 
+
+#revoke if required
+aws ec2 revoke-security-group-ingress --group-name launch-wizard-2 --protocol tcp --port 2049 --source-group sg-09b42ed286c59b050
+
+aws ec2 describe-subnets \
+--region ap-south-1 \
+--filters "Name=vpc-id,Values=vpc-bee01ed5" \
+--profile adminuser
+
+aws efs create-file-system \
+--creation-token FSCreationToken \
+--encrypted \
+--performance-mode generalPurpose \
+--throughput-mode bursting \
+--region ap-south-1 \
+--tags Key=Name,Value="DevOps File System" Key=developer,Value=Mkm \
+--profile adminuser
+
+aws efs delete-file-system \
+--file-system-id fs-005d241f954403465
+
+aws efs put-lifecycle-configuration \
+--file-system-id fs-005d241f954403465 \
+--lifecycle-policies TransitionToIA=AFTER_30_DAYS \
+--region ap-south-1 \
+--profile adminuser
+
+aws efs describe-file-systems --output table
+
+aws efs describe-file-systems --query "FileSystems[*].{FileSystemID:FileSystemId, Name:Name, SizeinBytes: SizeInBytes.Value}| []|reverse(sort_by(@, &SizeinBytes))" --profile adminuser --output table
+
+A mount target provides an NFSv4 endpoint at which you can mount an Amazon EFS file system. We recommend creating one mount target per Availability Zone.
+Here, --security-group -> security group created for efs
+aws efs create-mount-target \
+--file-system-id fs-005d241f954403465 \
+--subnet-id  subnet-4ac79206 \
+--security-group sg-03fa04a0a85b8e5df \
+--region ap-south-1 \
+--profile adminuser
+
+#do same for subnets of all EC2 where you need to mount the EFS
+aws efs create-mount-target \
+--file-system-id fs-005d241f954403465 \
+--subnet-id   subnet-ff816694 \
+--security-group sg-03fa04a0a85b8e5df \
+--region ap-south-1 \
+--profile adminuser
+
+aws efs describe-mount-targets --file-system-id fs-005d241f954403465
+
+#check the security  groups  currently in effect for a mount target
+aws efs describe-mount-target-security-groups --mount-target-id fsmt-0d6fcad8d30a13d22
+
+#delete mount target if needed and also before deleting the efs
+aws efs delete-mount-target --mount-target-id fsmt-0d6fcad8d30a13d22
+
+### Mount the EFS on worker nodes
+sudo mkdir /efs-data
+sudo chmod -R 777 /efs-data
+sudo apt-get install nfs-common -y
+
+sudo mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport fs-005d241f954403465.efs.ap-south-1.amazonaws.com:/ /efs-data/
+
+sudo echo "Hello there" >> /efs-data/index.html
+
+cat /efs-data/index.html
